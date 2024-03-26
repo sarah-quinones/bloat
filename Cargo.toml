@@ -1,0 +1,7 @@
+[package]
+name = "bloat"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+equator = "0.1.10"
