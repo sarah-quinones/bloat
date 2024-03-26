@@ -163,7 +163,7 @@ impl Limb for u64 {
 pub struct BigFloat<L> {
     sign_biased_exponent: u64,
     __precision_bits: Option<NonZeroU64>,
-    mantissa: [L],
+    __mantissa: [L],
 }
 
 #[repr(C)]
@@ -171,7 +171,7 @@ pub struct BigFloat<L> {
 pub struct SmallFloat<L, const N: usize> {
     sign_biased_exponent: u64,
     __precision_bits: Option<NonZeroU64>,
-    mantissa: [L; N],
+    __mantissa: [L; N],
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -195,6 +195,16 @@ pub enum Round {
     AwayFromZero,
     Up,
     Down,
+}
+
+impl Round {
+    pub const ALL: &'static [Self] = &[
+        Self::ToNearest,
+        Self::ToZero,
+        Self::AwayFromZero,
+        Self::Up,
+        Self::Down,
+    ];
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -273,7 +283,7 @@ impl<L: Limb> Clone for BoxFloat<L> {
     fn clone(&self) -> Self {
         let mut tmp = BigFloat::zero(self.precision_bits());
         tmp.sign_biased_exponent = self.sign_biased_exponent;
-        tmp.mantissa.copy_from_slice(&self.mantissa);
+        tmp.__mantissa.copy_from_slice(&self.__mantissa);
         tmp
     }
 }
@@ -315,7 +325,7 @@ impl<L: Limb> BigFloat<L> {
     pub fn zero(precision_bits: u64) -> BoxFloat<L> {
         use alloc::alloc::*;
 
-        assert!(precision_bits > 0);
+        assert!(all(precision_bits > 0, precision_bits < u64::MAX - L::BITS));
 
         let precision_bits_usize: usize = precision_bits.try_into().unwrap();
 
@@ -345,7 +355,7 @@ impl<L: Limb> BigFloat<L> {
     pub const fn precision_bits(&self) -> u64 {
         match self.__precision_bits {
             Some(precision_bits) => precision_bits.get(),
-            None => self.mantissa.len() as u64 * L::BITS,
+            None => self.__mantissa.len() as u64 * L::BITS,
         }
     }
 
@@ -369,8 +379,28 @@ impl<L: Limb> BigFloat<L> {
     }
 
     #[inline]
+    pub const fn mantissa_len(&self) -> usize {
+        ((self.precision_bits() + (L::BITS - 1)) / L::BITS) as usize
+    }
+
+    #[inline]
     pub const fn mantissa(&self) -> &[L] {
-        &self.mantissa
+        self.__mantissa.split_at(self.mantissa_len()).0
+    }
+
+    #[inline]
+    pub fn mantissa_mut(&mut self) -> &mut [L] {
+        self.__mantissa.split_at_mut(self.mantissa_len()).0
+    }
+
+    #[inline]
+    pub const fn full_mantissa(&self) -> &[L] {
+        &self.__mantissa
+    }
+
+    #[inline]
+    pub fn full_mantissa_mut(&mut self) -> &mut [L] {
+        &mut self.__mantissa
     }
 
     #[inline]
@@ -388,14 +418,17 @@ impl<L: Limb, const N: usize> SmallFloat<L, N> {
         precision_bits: u64,
         mantissa: [L; N],
     ) -> Self {
-        if precision_bits == 0 || precision_bits > N as u64 * L::BITS {
+        let Some(nbits) = (N as u64).checked_mul(L::BITS) else {
+            panic!()
+        };
+        if precision_bits == 0 || precision_bits > nbits || nbits >= u64::MAX - L::BITS {
             panic!()
         }
 
         Self {
             sign_biased_exponent: make_sign_and_biased_exponent(sign, exponent),
             __precision_bits: Some(unsafe { NonZeroU64::new_unchecked(precision_bits) }),
-            mantissa,
+            __mantissa: mantissa,
         }
     }
 
@@ -409,7 +442,7 @@ impl<L: Limb, const N: usize> SmallFloat<L, N> {
         Self {
             sign_biased_exponent: 0,
             __precision_bits: Some(unsafe { NonZeroU64::new_unchecked(precision_bits) }),
-            mantissa: [L::ZERO; N],
+            __mantissa: [L::ZERO; N],
         }
     }
 
