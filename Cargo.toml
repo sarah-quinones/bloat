@@ -4,4 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-equator = "0.1.10"
+bytemuck = "1.15.0"
+dyn-stack = "0.10.0"
+equator = "0.2.0"
+reborrow = "0.5.5"
