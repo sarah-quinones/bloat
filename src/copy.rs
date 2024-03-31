@@ -61,7 +61,11 @@ fn copy_finite_with_sign_round(dst: &mut BigFloat, src: &BigFloat, rnd: Round, s
                 *dst.mantissa_mut().last_mut().unwrap() = one.shl(consts::LIMB_BITS - 1);
             }
 
-            Approx::from_sign(sign)
+            if dst.sign_biased_exponent & consts::BIASED_EXPONENT_MASK == consts::BIASED_EXPONENT_INF {
+                Approx::Overflow
+            } else {
+                Approx::from_sign(sign)
+            }
         } else {
             // round to zero
             dst.mantissa_mut().copy_from_slice(&src.mantissa()[limb_diff..]);
@@ -75,8 +79,9 @@ fn copy_finite_with_sign_round(dst: &mut BigFloat, src: &BigFloat, rnd: Round, s
 pub fn copy_with_sign(dst: &mut BigFloat, src: &BigFloat, rnd: Round, sign: Sign) -> Approx {
     dst.sign_biased_exponent = ((sign.is_negative() as u64) << consts::SIGN_SHIFT) | (src.sign_biased_exponent & consts::BIASED_EXPONENT_MASK);
     let approx = if dst.precision_bits() >= src.precision_bits() {
-        dst.mantissa_mut()[..src.mantissa().len()].copy_from_slice(&src.mantissa());
-        dst.mantissa_mut()[src.mantissa().len()..].fill(consts::LIMB_ZERO);
+        let len = dst.mantissa_len();
+        dst.mantissa_mut()[..len - src.mantissa().len()].fill(consts::LIMB_ZERO);
+        dst.mantissa_mut()[len - src.mantissa().len()..].copy_from_slice(&src.mantissa());
         Approx::Exact
     } else {
         copy_finite_with_sign_round(dst, src, rnd, sign)
@@ -139,10 +144,10 @@ mod tests {
                 dst.exponent() == Exponent::Finite(3),
                 dst.sign() == Sign::Neg,
                 dst.mantissa()
-                    == &[
+                    == &utils::rev([
                         0b1011_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000,
                         0b0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000
-                    ]
+                    ])
             ));
         }
     }
@@ -217,7 +222,7 @@ mod tests {
         );
         let mut dst = SmallFloat::from_parts(4, Sign::Pos, Exponent::Zero, utils::rev([0, 0]));
 
-        assert!(copy(&mut dst, &src, Round::ToNearest) == Approx::LessThanExact);
+        assert!(copy(&mut dst, &src, Round::ToNearest) == Approx::Overflow);
         assert!(all(dst.precision_bits() == 4, dst.exponent() == Exponent::Inf, dst.sign() == Sign::Neg,));
     }
 

@@ -1,8 +1,7 @@
 use super::*;
-use equator::debug_assert;
 
-fn sign_exponent_of_add_different_sign(lhs: &BigFloat, rhs: &BigFloat) -> (Sign, Exponent) {
-    debug_assert!(lhs.sign() == rhs.sign().neg());
+fn sign_exponent_of_add_different_sign(lhs_sign: Sign, lhs: &BigFloat, rhs: &BigFloat) -> (Sign, Exponent, bool) {
+    let mut underflow = false;
 
     let (mut swap, lhs, rhs) =
         if (lhs.sign_biased_exponent & consts::BIASED_EXPONENT_MASK) >= (rhs.sign_biased_exponent & consts::BIASED_EXPONENT_MASK) {
@@ -14,11 +13,11 @@ fn sign_exponent_of_add_different_sign(lhs: &BigFloat, rhs: &BigFloat) -> (Sign,
     let lhs_exp = lhs.exponent();
     let rhs_exp = rhs.exponent();
     if rhs_exp == Exponent::Inf || rhs_exp == Exponent::NaN || lhs_exp == Exponent::NaN {
-        return (Sign::Pos, Exponent::NaN);
+        return (Sign::Pos, Exponent::NaN, underflow);
     }
     if lhs_exp == Exponent::Inf || lhs_exp == Exponent::Zero || rhs_exp == Exponent::Zero {
-        let sign = lhs.sign();
-        return (if swap { sign.neg() } else { sign }, lhs_exp);
+        let sign = lhs_sign;
+        return (if swap { sign.neg() } else { sign }, lhs_exp, underflow);
     }
 
     let (Exponent::Finite(lhs_exp), Exponent::Finite(rhs_exp)) = (lhs_exp, rhs_exp) else {
@@ -61,16 +60,17 @@ fn sign_exponent_of_add_different_sign(lhs: &BigFloat, rhs: &BigFloat) -> (Sign,
                     let exp = lhs_exp.saturating_sub_unsigned(res);
                     let sign = if swap { Sign::Neg } else { Sign::Pos };
                     let exp = if exp < consts::MIN_EXPONENT_INCLUSIVE {
+                        underflow = true;
                         Exponent::Zero
                     } else {
                         Exponent::Finite(exp)
                     };
-                    return (sign, exp);
+                    return (sign, exp, underflow);
                 }
                 res += consts::LIMB_BITS;
             }
 
-            return (Sign::Pos, Exponent::Zero);
+            return (Sign::Pos, Exponent::Zero, underflow);
         }
     }
 
@@ -95,11 +95,11 @@ fn sign_exponent_of_add_different_sign(lhs: &BigFloat, rhs: &BigFloat) -> (Sign,
     };
     let rhs = |i: usize| {
         let r0 = rhs_large_shift(i);
-        let r1 = rhs_large_shift(i + 1);
 
-        if exp_small_shift == 0 {
-            r0
+        if exp_small_shift == 0 || i == 0 {
+            r0.shr(exp_small_shift)
         } else {
+            let r1 = rhs_large_shift(i - 1);
             r0.shr(exp_small_shift) | r1.shl(consts::LIMB_BITS - exp_small_shift)
         }
     };
@@ -108,6 +108,7 @@ fn sign_exponent_of_add_different_sign(lhs: &BigFloat, rhs: &BigFloat) -> (Sign,
 
     let mut dif_hi = consts::LIMB_ZERO;
     let mut dif_lo = lhs(i).wrapping_sub(rhs(i));
+
     while dif_lo == consts::LIMB_ONE && dif_hi == consts::LIMB_ZERO {
         i += 1;
         let (new_dif_lo, borrow) = lhs(i).overflowing_sub(rhs(i));
@@ -136,23 +137,24 @@ fn sign_exponent_of_add_different_sign(lhs: &BigFloat, rhs: &BigFloat) -> (Sign,
     }
 
     let exp = lhs_exp.saturating_sub_unsigned(res);
-    let sign = if swap { Sign::Neg } else { Sign::Pos };
+    let sign = if swap { lhs_sign.neg() } else { lhs_sign };
     let exp = if exp < consts::MIN_EXPONENT_INCLUSIVE {
+        underflow = true;
         Exponent::Zero
     } else {
         Exponent::Finite(exp)
     };
-    (sign, exp)
+    (sign, exp, underflow)
 }
 
-pub fn add_different_sign(dst: &mut BigFloat, lhs: &BigFloat, rhs: &BigFloat, rnd: Round) -> Approx {
-    debug_assert!(lhs.sign() != rhs.sign());
+pub fn add_different_sign(dst: &mut BigFloat, lhs_sign: Sign, lhs: &BigFloat, rhs: &BigFloat, rnd: Round) -> Approx {
     let mut lhs = lhs;
     let mut rhs = rhs;
 
-    let (sign, dst_exp) = sign_exponent_of_add_different_sign(lhs, rhs);
+    let (sign, dst_exp, underflow) = sign_exponent_of_add_different_sign(lhs_sign, lhs, rhs);
     dst.sign_biased_exponent = crate::make_sign_and_biased_exponent(sign, dst_exp);
     let dst_exp = match dst_exp {
+        Exponent::Zero if underflow => return Approx::Underflow,
         Exponent::Zero | Exponent::Inf | Exponent::NaN => return Approx::Exact,
         Exponent::Finite(exp) => exp,
     };
@@ -287,7 +289,11 @@ pub fn add_different_sign(dst: &mut BigFloat, lhs: &BigFloat, rhs: &BigFloat, rn
     if !msb && !lsb_any {
         Approx::Exact
     } else if rnd == RoundKnownSign::AwayFromZero || (rnd == RoundKnownSign::ToNearest && msb && (lsb_any || result_lsb)) {
-        Approx::from_sign(sign)
+        if dst.sign_biased_exponent & consts::BIASED_EXPONENT_MASK == consts::BIASED_EXPONENT_INF {
+            Approx::Overflow
+        } else {
+            Approx::from_sign(sign)
+        }
     } else {
         Approx::from_sign(sign.neg())
     }
@@ -312,7 +318,7 @@ mod tests {
             Exponent::Finite(2),
             utils::rev([0b1001_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000]),
         );
-        assert!(sign_exponent_of_add_different_sign(&a, &b) == (Sign::Pos, Exponent::Finite(0)));
+        assert!(sign_exponent_of_add_different_sign(a.sign(), &a, &b) == (Sign::Pos, Exponent::Finite(0), false));
     }
 
     #[test]
@@ -329,7 +335,7 @@ mod tests {
             Exponent::Finite(2),
             utils::rev([0b1010_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000]),
         );
-        assert!(sign_exponent_of_add_different_sign(&a, &b) == (Sign::Pos, Exponent::Finite(-1)));
+        assert!(sign_exponent_of_add_different_sign(a.sign(), &a, &b) == (Sign::Pos, Exponent::Finite(-1), false));
     }
 
     #[test]
@@ -346,7 +352,7 @@ mod tests {
             Exponent::Finite(2),
             utils::rev([0b1111_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000]),
         );
-        assert!(sign_exponent_of_add_different_sign(&a, &b) == (Sign::Neg, Exponent::Finite(1)));
+        assert!(sign_exponent_of_add_different_sign(a.sign(), &a, &b) == (Sign::Neg, Exponent::Finite(1), false));
     }
 
     #[test]
@@ -364,7 +370,7 @@ mod tests {
             utils::rev([0b1001_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000]),
         );
         let mut c = SmallFloat::<1>::zero(4);
-        add_different_sign(&mut c, &a, &b, Round::ToNearest);
+        add_different_sign(&mut c, a.sign(), &a, &b, Round::ToNearest);
         assert!(
             c.repr()
                 == SmallFloat::from_parts(
@@ -392,7 +398,7 @@ mod tests {
             utils::rev([0b1001_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000]),
         );
         let mut c = SmallFloat::<2>::zero(72);
-        add_different_sign(&mut c, &a, &b, Round::ToNearest);
+        add_different_sign(&mut c, a.sign(), &a, &b, Round::ToNearest);
         assert!(
             c.repr()
                 == SmallFloat::from_parts(
@@ -423,7 +429,7 @@ mod tests {
             utils::rev([0b1001_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000]),
         );
         let mut c = SmallFloat::<2>::zero(72);
-        add_different_sign(&mut c, &a, &b, Round::ToNearest);
+        add_different_sign(&mut c, a.sign(), &a, &b, Round::ToNearest);
         assert!(
             c.repr()
                 == SmallFloat::from_parts(
@@ -460,7 +466,7 @@ mod tests {
             ]),
         );
         let mut c = SmallFloat::<2>::zero(2);
-        add_different_sign(&mut c, &a, &b, Round::ToNearest);
+        add_different_sign(&mut c, a.sign(), &a, &b, Round::ToNearest);
         assert!(
             c.repr()
                 == SmallFloat::from_parts(

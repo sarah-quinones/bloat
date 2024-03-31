@@ -3,7 +3,11 @@ use core::{
     num::NonZeroU64,
     ops::{Shl, Shr},
 };
+use dyn_stack::{PodStack, SizeOverflow, StackReq};
 use equator::assert;
+use reborrow::*;
+#[allow(unused_imports)]
+use utils::BinRepr as bin;
 
 extern crate alloc;
 
@@ -13,6 +17,16 @@ mod add;
 mod sub;
 
 mod mul;
+
+mod div;
+
+mod sqrt;
+
+mod remainder;
+
+mod radix;
+
+mod convert;
 
 mod podstack;
 pub use podstack::{temp_big_float_req, temp_big_float_uninit, temp_big_float_zero};
@@ -98,18 +112,54 @@ pub mod utils {
 pub mod math {
     use super::*;
 
-    pub use copy::{abs, copy};
+    /// TODO: docs
+    pub use copy::abs;
 
+    /// TODO: docs
+    pub use copy::copy;
+
+    /// TODO: docs
     #[inline]
     pub fn add(dst: &mut BigFloat, lhs: &BigFloat, rhs: &BigFloat, rnd: Round) -> Approx {
         if lhs.sign() == rhs.sign() {
-            add::add_same_sign(dst, lhs, rhs, rnd)
+            add::add_same_sign(dst, lhs.sign(), lhs, rhs, rnd)
         } else {
-            sub::add_different_sign(dst, lhs, rhs, rnd)
+            sub::add_different_sign(dst, lhs.sign(), lhs, rhs, rnd)
         }
     }
 
+    #[inline]
+    pub fn sub(dst: &mut BigFloat, lhs: &BigFloat, rhs: &BigFloat, rnd: Round) -> Approx {
+        if lhs.sign() == rhs.sign() {
+            sub::add_different_sign(dst, lhs.sign(), lhs, rhs, rnd)
+        } else {
+            add::add_same_sign(dst, lhs.sign(), lhs, rhs, rnd)
+        }
+    }
+
+    /// TODO: docs
     pub use mul::mul;
+
+    /// TODO: docs
+    pub use mul::mul_add;
+
+    /// TODO: docs
+    pub use mul::mul_sub;
+
+    /// TODO: docs
+    pub use mul::negate_mul_add;
+
+    /// TODO: docs
+    pub use mul::negate_mul_sub;
+
+    /// TODO: docs
+    pub use div::div;
+
+    /// TODO: docs
+    pub use sqrt::sqrt;
+
+    /// TODO: docs
+    pub use remainder::remquo;
 }
 
 #[repr(C)]
@@ -120,7 +170,7 @@ pub struct BigFloat {
 }
 
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Copy, Clone)]
 pub struct SmallFloat<const N: usize> {
     pub sign_biased_exponent: u64,
     __precision_bits: Option<NonZeroU64>,
@@ -192,9 +242,11 @@ impl Round {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(i8)]
 pub enum Approx {
+    Underflow = -2,
     LessThanExact = -1,
     Exact = 0,
     GreaterThanExact = 1,
+    Overflow = 2,
 }
 
 impl Approx {
@@ -358,6 +410,11 @@ impl BigFloat {
     #[inline]
     pub fn copy_from(&mut self, src: &BigFloat, rnd: Round) -> Approx {
         copy::copy(self, src, rnd)
+    }
+
+    #[inline]
+    pub fn to_f64(&self, rnd: Round) -> (f64, Approx) {
+        convert::to_f64(self, rnd)
     }
 
     #[inline]

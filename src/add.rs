@@ -1,9 +1,6 @@
 use super::*;
-use equator::debug_assert;
 
-pub fn add_same_sign(dst: &mut BigFloat, lhs: &BigFloat, rhs: &BigFloat, rnd: Round) -> Approx {
-    debug_assert!(lhs.sign() == rhs.sign());
-
+pub fn add_same_sign(dst: &mut BigFloat, lhs_sign: Sign, lhs: &BigFloat, rhs: &BigFloat, rnd: Round) -> Approx {
     let (lhs, rhs) = if (lhs.sign_biased_exponent & consts::BIASED_EXPONENT_MASK) >= (rhs.sign_biased_exponent & consts::BIASED_EXPONENT_MASK) {
         (lhs, rhs)
     } else {
@@ -16,7 +13,7 @@ pub fn add_same_sign(dst: &mut BigFloat, lhs: &BigFloat, rhs: &BigFloat, rnd: Ro
         return dst.copy_from(lhs, rnd);
     }
 
-    dst.sign_biased_exponent = lhs.sign_biased_exponent;
+    dst.sign_biased_exponent = (lhs.sign_biased_exponent & consts::BIASED_EXPONENT_MASK) | ((lhs_sign.is_negative() as u64) << 63);
 
     let rnd = rnd.with_sign(lhs.sign());
     let (Exponent::Finite(lhs_exp), Exponent::Finite(rhs_exp)) = (lhs_exp, rhs_exp) else {
@@ -145,7 +142,7 @@ pub fn add_same_sign(dst: &mut BigFloat, lhs: &BigFloat, rhs: &BigFloat, rnd: Ro
         result_lsb = (dst_m[0] & ulp) == ulp;
     }
     if dst.sign_biased_exponent & consts::BIASED_EXPONENT_MASK == consts::BIASED_EXPONENT_INF {
-        return Approx::from_sign(lhs.sign());
+        return Approx::Overflow;
     }
 
     if rnd == RoundKnownSign::AwayFromZero || (rnd == RoundKnownSign::ToNearest && msb && (lsb_any || result_lsb)) {
@@ -168,9 +165,13 @@ pub fn add_same_sign(dst: &mut BigFloat, lhs: &BigFloat, rhs: &BigFloat, rnd: Ro
     if !msb && !lsb_any {
         Approx::Exact
     } else if rnd == RoundKnownSign::AwayFromZero || (rnd == RoundKnownSign::ToNearest && msb && (lsb_any || result_lsb)) {
-        Approx::from_sign(lhs.sign())
+        if dst.sign_biased_exponent & consts::BIASED_EXPONENT_MASK == consts::BIASED_EXPONENT_INF {
+            Approx::Overflow
+        } else {
+            Approx::from_sign(lhs_sign)
+        }
     } else {
-        Approx::from_sign(lhs.sign().neg())
+        Approx::from_sign(lhs_sign.neg())
     }
 }
 
@@ -195,7 +196,7 @@ mod tests {
         );
 
         let mut c = SmallFloat::from_parts(4, Sign::Neg, Exponent::Finite(2), utils::rev([u64::MAX]));
-        assert!(add_same_sign(&mut c, &a, &b, Round::ToNearest) == Approx::Exact);
+        assert!(add_same_sign(&mut c, a.sign(), &a, &b, Round::ToNearest) == Approx::Exact);
 
         assert!(
             c.repr()
@@ -229,7 +230,7 @@ mod tests {
 
         {
             let mut c = SmallFloat::from_parts(6, Sign::Neg, Exponent::Finite(2), utils::rev([u64::MAX]));
-            assert!(add_same_sign(&mut c, &a, &b, Round::ToNearest) == Approx::Exact);
+            assert!(add_same_sign(&mut c, a.sign(), &a, &b, Round::ToNearest) == Approx::Exact);
             assert!(
                 c.repr()
                     == SmallFloat::from_parts(
@@ -243,7 +244,7 @@ mod tests {
         }
         {
             let mut c = SmallFloat::from_parts(5, Sign::Neg, Exponent::Finite(2), utils::rev([u64::MAX]));
-            assert!(add_same_sign(&mut c, &a, &b, Round::ToNearest) == Approx::LessThanExact);
+            assert!(add_same_sign(&mut c, a.sign(), &a, &b, Round::ToNearest) == Approx::LessThanExact);
             assert!(
                 c.repr()
                     == SmallFloat::from_parts(
@@ -257,7 +258,7 @@ mod tests {
         }
         {
             let mut c = SmallFloat::from_parts(5, Sign::Neg, Exponent::Finite(2), utils::rev([u64::MAX]));
-            assert!(add_same_sign(&mut c, &a, &b, Round::AwayFromZero) == Approx::GreaterThanExact);
+            assert!(add_same_sign(&mut c, a.sign(), &a, &b, Round::AwayFromZero) == Approx::GreaterThanExact);
             assert!(
                 c.repr()
                     == SmallFloat::from_parts(
@@ -271,7 +272,7 @@ mod tests {
         }
         {
             let mut c = SmallFloat::from_parts(4, Sign::Neg, Exponent::Finite(2), utils::rev([u64::MAX]));
-            assert!(add_same_sign(&mut c, &a, &b, Round::AwayFromZero) == Approx::GreaterThanExact);
+            assert!(add_same_sign(&mut c, a.sign(), &a, &b, Round::AwayFromZero) == Approx::GreaterThanExact);
             assert!(
                 c.repr()
                     == SmallFloat::from_parts(
@@ -285,7 +286,7 @@ mod tests {
         }
         {
             let mut c = SmallFloat::from_parts(4, Sign::Neg, Exponent::Finite(2), utils::rev([u64::MAX]));
-            assert!(add_same_sign(&mut c, &a, &b, Round::ToNearest) == Approx::LessThanExact);
+            assert!(add_same_sign(&mut c, a.sign(), &a, &b, Round::ToNearest) == Approx::LessThanExact);
             assert!(
                 c.repr()
                     == SmallFloat::from_parts(
@@ -315,7 +316,7 @@ mod tests {
         );
 
         let mut c = SmallFloat::from_parts(68, Sign::Neg, Exponent::Finite(2), utils::rev([u64::MAX; 2]));
-        assert!(add_same_sign(&mut c, &a, &b, Round::ToNearest) == Approx::Exact);
+        assert!(add_same_sign(&mut c, a.sign(), &a, &b, Round::ToNearest) == Approx::Exact);
         assert!(
             c.repr()
                 == SmallFloat::from_parts(
@@ -331,7 +332,7 @@ mod tests {
         );
 
         let mut c = SmallFloat::from_parts(6, Sign::Neg, Exponent::Finite(2), utils::rev([u64::MAX; 2]));
-        assert!(add_same_sign(&mut c, &a, &b, Round::ToNearest) == Approx::LessThanExact);
+        assert!(add_same_sign(&mut c, a.sign(), &a, &b, Round::ToNearest) == Approx::LessThanExact);
         assert!(
             c.repr()
                 == SmallFloat::from_parts(
@@ -344,7 +345,7 @@ mod tests {
         );
 
         let mut c = SmallFloat::from_parts(6, Sign::Neg, Exponent::Finite(2), utils::rev([u64::MAX; 2]));
-        assert!(add_same_sign(&mut c, &a, &b, Round::Up) == Approx::GreaterThanExact);
+        assert!(add_same_sign(&mut c, a.sign(), &a, &b, Round::Up) == Approx::GreaterThanExact);
         assert!(
             c.repr()
                 == SmallFloat::from_parts(
@@ -357,7 +358,7 @@ mod tests {
         );
 
         let mut c = SmallFloat::from_parts(4, Sign::Neg, Exponent::Finite(2), utils::rev([u64::MAX; 2]));
-        assert!(add_same_sign(&mut c, &a, &b, Round::Up) == Approx::GreaterThanExact);
+        assert!(add_same_sign(&mut c, a.sign(), &a, &b, Round::Up) == Approx::GreaterThanExact);
         assert!(
             c.repr()
                 == SmallFloat::from_parts(
@@ -386,7 +387,7 @@ mod tests {
         );
 
         let mut c = SmallFloat::from_parts(68, Sign::Neg, Exponent::Finite(2), utils::rev([u64::MAX; 2]));
-        assert!(add_same_sign(&mut c, &a, &b, Round::ToNearest) == Approx::Exact);
+        assert!(add_same_sign(&mut c, a.sign(), &a, &b, Round::ToNearest) == Approx::Exact);
         assert!(
             c.repr()
                 == SmallFloat::from_parts(
@@ -402,7 +403,7 @@ mod tests {
         );
 
         let mut c = SmallFloat::from_parts(6, Sign::Neg, Exponent::Finite(2), utils::rev([u64::MAX; 2]));
-        assert!(add_same_sign(&mut c, &a, &b, Round::ToNearest) == Approx::LessThanExact);
+        assert!(add_same_sign(&mut c, a.sign(), &a, &b, Round::ToNearest) == Approx::LessThanExact);
         assert!(
             c.repr()
                 == SmallFloat::from_parts(
@@ -415,7 +416,7 @@ mod tests {
         );
 
         let mut c = SmallFloat::from_parts(6, Sign::Neg, Exponent::Finite(2), utils::rev([u64::MAX; 2]));
-        assert!(add_same_sign(&mut c, &a, &b, Round::Up) == Approx::GreaterThanExact);
+        assert!(add_same_sign(&mut c, a.sign(), &a, &b, Round::Up) == Approx::GreaterThanExact);
         assert!(
             c.repr()
                 == SmallFloat::from_parts(
@@ -428,7 +429,7 @@ mod tests {
         );
 
         let mut c = SmallFloat::from_parts(4, Sign::Neg, Exponent::Finite(2), utils::rev([u64::MAX; 2]));
-        assert!(add_same_sign(&mut c, &a, &b, Round::Up) == Approx::GreaterThanExact);
+        assert!(add_same_sign(&mut c, a.sign(), &a, &b, Round::Up) == Approx::GreaterThanExact);
         assert!(
             c.repr()
                 == SmallFloat::from_parts(
@@ -457,7 +458,7 @@ mod tests {
         );
 
         let mut c = SmallFloat::from_parts(132, Sign::Neg, Exponent::Finite(2), utils::rev([u64::MAX; 3]));
-        assert!(add_same_sign(&mut c, &a, &b, Round::ToNearest) == Approx::Exact);
+        assert!(add_same_sign(&mut c, a.sign(), &a, &b, Round::ToNearest) == Approx::Exact);
         assert!(
             c.repr()
                 == SmallFloat::from_parts(

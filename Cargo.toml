@@ -8,3 +8,6 @@ bytemuck = "1.15.0"
 dyn-stack = "0.10.0"
 equator = "0.2.0"
 reborrow = "0.5.5"
+
+[dev-dependencies]
+rug = "1.24.0"
