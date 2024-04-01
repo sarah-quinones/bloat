@@ -1,5 +1,4 @@
 use super::*;
-use dyn_stack::{PodStack, SizeOverflow, StackReq};
 use equator::assert;
 
 #[inline]

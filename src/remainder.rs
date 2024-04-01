@@ -1,5 +1,42 @@
 use super::*;
 
+fn remquo_finite_direct_req(rem_prec: u64, quo_len: usize, lhs_prec: u64, rhs_prec: u64) -> Result<StackReq, SizeOverflow> {
+    let fquo_prec = (quo_len as u64).checked_mul(consts::LIMB_BITS).ok_or(SizeOverflow)?;
+
+    StackReq::try_all_of([
+        temp_big_float_req(fquo_prec)?,
+        StackReq::try_any_of([
+            math::div_req(fquo_prec, lhs_prec, rhs_prec)?,
+            math::mul_req(rem_prec, fquo_prec, rhs_prec)?,
+        ])?,
+    ])
+}
+fn remquo_finite_req(rem_prec: u64, quo_len: usize, lhs_prec: u64, rhs_prec: u64) -> Result<StackReq, SizeOverflow> {
+    let y_len = (rhs_prec.div_ceil(consts::LIMB_BITS)) as usize;
+
+    let wide = StackReq::try_new::<Limb>(y_len * 2 + 1)?;
+    let pow2_mod_y = StackReq::try_new::<Limb>(y_len)?;
+    let __quo = StackReq::try_new::<Limb>(y_len)?;
+    let x_pow2_mod_y = StackReq::try_new::<Limb>(y_len)?;
+
+    let idiv = div::idivrem_normalized_req(y_len * 2 + 1, y_len)?;
+    let imul = mul::imul_req(y_len, y_len)?;
+
+    let frem = temp_big_float_req((y_len as u64 + 1).checked_mul(consts::LIMB_BITS).ok_or(SizeOverflow)?)?;
+
+    StackReq::try_all_of([
+        pow2_mod_y,
+        StackReq::try_any_of([
+            StackReq::try_all_of([frem, remquo_finite_direct_req(rem_prec, quo_len, lhs_prec, rhs_prec)?])?,
+            StackReq::try_all_of([wide, __quo, x_pow2_mod_y, StackReq::try_any_of([idiv, imul])?])?,
+        ])?,
+    ])
+}
+
+pub fn remquo_req(rem_prec: u64, quo_len: usize, lhs_prec: u64, rhs_prec: u64) -> Result<StackReq, SizeOverflow> {
+    remquo_finite_req(rem_prec, quo_len, lhs_prec, rhs_prec)
+}
+
 fn remquo_finite_direct(rem: &mut BigFloat, quo: &mut [Limb], lhs: &BigFloat, rhs: &BigFloat, rnd: Round, stack: PodStack<'_>) -> Approx {
     let Exponent::Finite(lhs_exp) = lhs.exponent() else { panic!() };
     let Exponent::Finite(rhs_exp) = rhs.exponent() else { panic!() };
@@ -148,11 +185,11 @@ fn remquo_finite(rem: &mut BigFloat, quo: &mut [Limb], lhs: &BigFloat, rhs: &Big
         let p = (y_bitlen.wrapping_sub(x_bitlen) as i64).wrapping_sub(y_exp.wrapping_sub(x_exp).wrapping_add(q_bitlen as i64)) as u64;
 
         // https://en.wikipedia.org/wiki/Exponentiation_by_squaring
-        let (wide, stack) = stack.make_raw::<Limb>(ym.len() * 2 + 1);
-        let (y_pow2_mod_y, stack) = stack.make_raw::<Limb>(ym.len());
+        let (y_pow2_mod_y, mut stack) = stack.make_raw::<Limb>(ym.len());
         let mut y_bit_pos = Some(0u64);
-        let (__quo, mut stack) = stack.make_raw::<Limb>(ym.len());
         {
+            let (wide, stack) = stack.rb_mut().make_raw::<Limb>(ym.len() * 2 + 1);
+            let (__quo, mut stack) = stack.make_raw::<Limb>(ym.len());
             let (x_pow2_mod_y, mut stack) = stack.rb_mut().make_raw::<Limb>(ym.len());
 
             wide.fill(consts::LIMB_ZERO);
@@ -214,6 +251,8 @@ fn remquo_finite(rem: &mut BigFloat, quo: &mut [Limb], lhs: &BigFloat, rhs: &Big
         let pow2_mod_y = y_pow2_mod_y;
 
         if let Some(y_bit_pos) = y_bit_pos {
+            let (wide, stack) = stack.rb_mut().make_raw::<Limb>(ym.len() * 2 + 1);
+            let (__quo, mut stack) = stack.make_raw::<Limb>(ym.len());
             pow2_mod_y[(y_bit_pos / consts::LIMB_BITS) as usize] = consts::LIMB_ONE.shl(y_bit_pos % consts::LIMB_BITS);
             wide[ym.len() * 2] = consts::LIMB_ZERO;
             mul::imul(&mut wide[..ym.len() * 2], &*xm, &*pow2_mod_y, stack.rb_mut());

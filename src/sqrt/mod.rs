@@ -2,6 +2,21 @@ use super::*;
 
 mod newton;
 
+pub fn sqrt_req(dst_prec: u64, x_prec: u64) -> Result<StackReq, SizeOverflow> {
+    let x_len = (x_prec.div_ceil(consts::LIMB_BITS)) as usize;
+    let dst_len = (dst_prec.div_ceil(consts::LIMB_BITS)) as usize;
+    let nlimbs = Ord::max(x_len / 2 + 1, dst_len) + 1;
+
+    let lshift = (nlimbs as u64 * consts::LIMB_BITS - x_len as u64 * (consts::LIMB_BITS / 2)) * 2;
+    StackReq::try_all_of([
+        temp_big_float_req(nlimbs as u64 * consts::LIMB_BITS)?,
+        StackReq::try_any_of([
+            newton::isqrt_req(nlimbs, lshift)?,
+            StackReq::try_all_of([StackReq::try_new::<Limb>(nlimbs * 2)?, mul::isqr_req(nlimbs)?])?,
+        ])?,
+    ])
+}
+
 pub fn sqrt(dst: &mut BigFloat, x: &BigFloat, rnd: Round, stack: PodStack) -> Approx {
     let exp = match x.exponent() {
         Exponent::Zero => {

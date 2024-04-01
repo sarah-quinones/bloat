@@ -14,6 +14,19 @@ pub fn idivrem_normalized(quo: &mut [Limb], rem: Option<&mut [Limb]>, lhs: &mut 
     schoolbook::divrem_bigint(quo, rem, lhs, rhs)
 }
 
+pub fn div_req(dst_prec: u64, lhs_prec: u64, rhs_prec: u64) -> Result<StackReq, SizeOverflow> {
+    let dst_len = (dst_prec.div_ceil(consts::LIMB_BITS)) as usize;
+    let lhs_len = (lhs_prec.div_ceil(consts::LIMB_BITS)) as usize;
+    let rhs_len = (rhs_prec.div_ceil(consts::LIMB_BITS)) as usize;
+
+    let quo_len = Ord::max(dst_len + 1, lhs_len) + 1;
+    StackReq::try_all_of([
+        StackReq::try_new::<Limb>(quo_len + rhs_len)?,
+        StackReq::try_new::<Limb>(rhs_len)?,
+        temp_big_float_req(quo_len as u64 * consts::LIMB_BITS)?,
+    ])
+}
+
 pub fn div(dst: &mut BigFloat, lhs: &BigFloat, rhs: &BigFloat, rnd: Round, stack: PodStack<'_>) -> Approx {
     let sign = if lhs.sign() == rhs.sign() { Sign::Pos } else { Sign::Neg };
     let mut exp = match (lhs.exponent(), rhs.exponent()) {

@@ -3,7 +3,7 @@ use core::{
     num::NonZeroU64,
     ops::{Shl, Shr},
 };
-use dyn_stack::{PodStack, SizeOverflow, StackReq};
+use dyn_stack::{GlobalPodBuffer, PodStack, SizeOverflow, StackReq};
 use equator::assert;
 use reborrow::*;
 #[allow(unused_imports)]
@@ -110,6 +110,25 @@ pub mod utils {
 }
 
 pub mod math {
+    #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+    #[repr(i8)]
+    pub enum Approx {
+        Underflow = -2,
+        LessThanExact = -1,
+        Exact = 0,
+        GreaterThanExact = 1,
+        Overflow = 2,
+    }
+
+    #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+    pub enum Round {
+        ToNearest,
+        ToZero,
+        AwayFromZero,
+        Up,
+        Down,
+    }
+
     use super::*;
 
     /// TODO: docs
@@ -141,6 +160,9 @@ pub mod math {
     pub use mul::mul;
 
     /// TODO: docs
+    pub use mul::mul_req;
+
+    /// TODO: docs
     pub use mul::mul_add;
 
     /// TODO: docs
@@ -156,10 +178,129 @@ pub mod math {
     pub use div::div;
 
     /// TODO: docs
+    pub use div::div_req;
+
+    /// TODO: docs
     pub use sqrt::sqrt;
 
     /// TODO: docs
+    pub use sqrt::sqrt_req;
+
+    /// TODO: docs
     pub use remainder::remquo;
+
+    /// TODO: docs
+    pub use remainder::remquo_req;
+
+    /// TODO: docs
+    pub use convert::to_f64;
+
+    /// TODO: docs
+    pub use convert::from_f64;
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct PrecisionCtx {
+    precision_bits: NonZeroU64,
+}
+
+impl PrecisionCtx {
+    #[track_caller]
+    #[inline]
+    pub fn new(precision_bits: u64) -> Self {
+        assert!(all(
+            precision_bits > 1,                         //
+            precision_bits < BigFloat::max_precision(), //
+        ));
+
+        Self {
+            precision_bits: NonZeroU64::new(precision_bits).unwrap(),
+        }
+    }
+
+    #[inline]
+    pub fn precision_bits(self) -> u64 {
+        self.precision_bits.get()
+    }
+
+    pub fn add(self, lhs: &BigFloat, rhs: &BigFloat) -> BoxFloat {
+        let mut out = BigFloat::zero(self.precision_bits());
+        math::add(&mut out, lhs, rhs, Round::ToNearest);
+        out
+    }
+
+    pub fn sub(self, lhs: &BigFloat, rhs: &BigFloat) -> BoxFloat {
+        let mut out = BigFloat::zero(self.precision_bits());
+        math::sub(&mut out, lhs, rhs, Round::ToNearest);
+        out
+    }
+
+    pub fn abs(self, x: &BigFloat) -> BoxFloat {
+        let mut out = BigFloat::zero(self.precision_bits());
+        math::abs(&mut out, x, Round::ToNearest);
+        out
+    }
+
+    pub fn mul(self, lhs: &BigFloat, rhs: &BigFloat) -> BoxFloat {
+        let mut out = BigFloat::zero(self.precision_bits());
+        math::mul(
+            &mut out,
+            lhs,
+            rhs,
+            Round::ToNearest,
+            PodStack::new(&mut GlobalPodBuffer::new(
+                math::mul_req(self.precision_bits(), lhs.precision_bits(), rhs.precision_bits()).unwrap(),
+            )),
+        );
+        out
+    }
+
+    pub fn div(self, lhs: &BigFloat, rhs: &BigFloat) -> BoxFloat {
+        let mut out = BigFloat::zero(self.precision_bits());
+        math::div(
+            &mut out,
+            lhs,
+            rhs,
+            Round::ToNearest,
+            PodStack::new(&mut GlobalPodBuffer::new(
+                math::div_req(self.precision_bits(), lhs.precision_bits(), rhs.precision_bits()).unwrap(),
+            )),
+        );
+        out
+    }
+
+    pub fn sqrt(self, x: &BigFloat) -> BoxFloat {
+        let mut out = BigFloat::zero(self.precision_bits());
+        math::sqrt(
+            &mut out,
+            x,
+            Round::ToNearest,
+            PodStack::new(&mut GlobalPodBuffer::new(
+                math::sqrt_req(self.precision_bits(), x.precision_bits()).unwrap(),
+            )),
+        );
+        out
+    }
+
+    pub fn rem(self, lhs: &BigFloat, rhs: &BigFloat) -> BoxFloat {
+        self.remquo(&mut [], lhs, rhs)
+    }
+
+    pub fn remquo(self, quo: &mut [Limb], lhs: &BigFloat, rhs: &BigFloat) -> BoxFloat {
+        let mut out = BigFloat::zero(self.precision_bits());
+        let quo_len = quo.len();
+        math::remquo(
+            &mut out,
+            quo,
+            lhs,
+            rhs,
+            Round::ToNearest,
+            PodStack::new(&mut GlobalPodBuffer::new(
+                math::remquo_req(self.precision_bits(), quo_len, lhs.precision_bits(), rhs.precision_bits()).unwrap(),
+            )),
+        );
+        out
+    }
 }
 
 #[repr(C)]
@@ -192,15 +333,6 @@ pub enum Exponent {
     Finite(i64),
     Inf,
     NaN,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Round {
-    ToNearest,
-    ToZero,
-    AwayFromZero,
-    Up,
-    Down,
 }
 
 impl Round {
@@ -239,15 +371,7 @@ impl Round {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-#[repr(i8)]
-pub enum Approx {
-    Underflow = -2,
-    LessThanExact = -1,
-    Exact = 0,
-    GreaterThanExact = 1,
-    Overflow = 2,
-}
+use math::{Approx, Round};
 
 impl Approx {
     #[inline]
@@ -280,13 +404,31 @@ impl Sign {
     }
 }
 
-pub type BoxFloat = alloc::boxed::Box<BigFloat>;
+pub struct BoxFloat {
+    inner: alloc::boxed::Box<BigFloat>,
+}
+
+impl core::ops::Deref for BoxFloat {
+    type Target = BigFloat;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &*self.inner
+    }
+}
+
+impl core::ops::DerefMut for BoxFloat {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut *self.inner
+    }
+}
 
 impl Clone for BoxFloat {
     fn clone(&self) -> Self {
-        let mut tmp = BigFloat::zero(self.precision_bits());
-        tmp.sign_biased_exponent = self.sign_biased_exponent;
-        tmp.__mantissa.copy_from_slice(&self.__mantissa);
+        let mut tmp = BigFloat::zero(self.inner.precision_bits());
+        tmp.inner.sign_biased_exponent = self.inner.sign_biased_exponent;
+        tmp.inner.__mantissa.copy_from_slice(&self.inner.__mantissa);
         tmp
     }
 }
@@ -352,7 +494,9 @@ impl BigFloat {
 
         let ptr = core::ptr::slice_from_raw_parts_mut(ptr, nlimbs) as *mut BigFloat;
         unsafe { (*ptr).__precision_bits = Some(NonZeroU64::new_unchecked(precision_bits)) };
-        unsafe { alloc::boxed::Box::from_raw(ptr) }
+        BoxFloat {
+            inner: unsafe { alloc::boxed::Box::from_raw(ptr) },
+        }
     }
 
     #[inline]
@@ -421,19 +565,41 @@ impl BigFloat {
     pub fn repr(&self) -> &utils::FloatRepr {
         unsafe { &*(self as *const BigFloat as *const utils::FloatRepr) }
     }
+
+    #[inline]
+    pub const fn max_precision() -> u64 {
+        u64::MAX - consts::LIMB_BITS
+    }
 }
 
 impl<const N: usize> SmallFloat<N> {
+    #[inline]
+    #[track_caller]
+    pub const fn max_precision() -> u64 {
+        if N == 0 {
+            panic!();
+        }
+
+        let max = u64::MAX - consts::LIMB_BITS;
+        match (N as u64).checked_mul(consts::LIMB_BITS) {
+            Some(p) => {
+                if p < max {
+                    p
+                } else {
+                    max
+                }
+            }
+            None => panic!(),
+        }
+    }
+
     #[inline]
     #[track_caller]
     pub const fn from_parts(precision_bits: u64, sign: Sign, exponent: Exponent, mantissa: [Limb; N]) -> Self {
         if N == 0 {
             panic!();
         }
-        let Some(nbits) = (N as u64).checked_mul(Limb::BITS as u64) else {
-            panic!()
-        };
-        if precision_bits <= 1 || precision_bits > nbits || nbits >= u64::MAX - Limb::BITS as u64 {
+        if precision_bits <= 1 || precision_bits >= Self::max_precision() {
             panic!()
         }
 
@@ -447,7 +613,7 @@ impl<const N: usize> SmallFloat<N> {
     #[inline]
     #[track_caller]
     pub const fn zero(precision_bits: u64) -> Self {
-        if precision_bits == 0 || precision_bits > N as u64 * Limb::BITS as u64 {
+        if precision_bits == 0 || precision_bits >= Self::max_precision() {
             panic!()
         }
 

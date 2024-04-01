@@ -27,6 +27,17 @@ pub fn isqr(full_mul: &mut [Limb], input: &[Limb], stack: PodStack<'_>) {
     schoolbook::mul_bigint(full_mul, input, input);
 }
 
+pub fn mul_req(dst_prec: u64, lhs_prec: u64, rhs_prec: u64) -> Result<StackReq, SizeOverflow> {
+    _ = dst_prec;
+    let lhs_prec = lhs_prec.next_multiple_of(consts::LIMB_BITS);
+    let rhs_prec = rhs_prec.next_multiple_of(consts::LIMB_BITS);
+    let full_prec = lhs_prec.checked_add(rhs_prec).ok_or(SizeOverflow)?;
+    StackReq::try_all_of([
+        temp_big_float_req(full_prec)?,
+        imul_req((lhs_prec / consts::LIMB_BITS) as usize, (rhs_prec / consts::LIMB_BITS) as usize)?,
+    ])
+}
+
 enum NegateKind {
     Negate,
     NoNegate,
