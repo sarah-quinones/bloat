@@ -3,7 +3,7 @@ use core::{
     num::NonZeroU64,
     ops::{Shl, Shr},
 };
-use dyn_stack::{GlobalPodBuffer, PodStack, SizeOverflow, StackReq};
+use dyn_stack::{PodBuffer, PodStack, StackReq};
 use equator::assert;
 use reborrow::*;
 #[allow(unused_imports)]
@@ -29,7 +29,7 @@ mod radix;
 mod convert;
 
 mod podstack;
-pub use podstack::{temp_big_float_req, temp_big_float_uninit, temp_big_float_zero};
+pub use podstack::{temp_big_float_scratch, temp_big_float_uninit, temp_big_float_zero};
 
 pub type Limb = u64;
 
@@ -160,7 +160,7 @@ pub mod math {
     pub use mul::mul;
 
     /// TODO: docs
-    pub use mul::mul_req;
+    pub use mul::mul_scratch;
 
     /// TODO: docs
     pub use mul::mul_add;
@@ -178,19 +178,19 @@ pub mod math {
     pub use div::div;
 
     /// TODO: docs
-    pub use div::div_req;
+    pub use div::div_scratch;
 
     /// TODO: docs
     pub use sqrt::sqrt;
 
     /// TODO: docs
-    pub use sqrt::sqrt_req;
+    pub use sqrt::sqrt_scratch;
 
     /// TODO: docs
     pub use remainder::remquo;
 
     /// TODO: docs
-    pub use remainder::remquo_req;
+    pub use remainder::remquo_scratch;
 
     /// TODO: docs
     pub use convert::to_f64;
@@ -248,9 +248,11 @@ impl PrecisionCtx {
             lhs,
             rhs,
             Round::ToNearest,
-            PodStack::new(&mut GlobalPodBuffer::new(
-                math::mul_req(self.precision_bits(), lhs.precision_bits(), rhs.precision_bits()).unwrap(),
-            )),
+            PodStack::new(&mut PodBuffer::new(math::mul_scratch(
+                self.precision_bits(),
+                lhs.precision_bits(),
+                rhs.precision_bits(),
+            ))),
         );
         out
     }
@@ -262,9 +264,11 @@ impl PrecisionCtx {
             lhs,
             rhs,
             Round::ToNearest,
-            PodStack::new(&mut GlobalPodBuffer::new(
-                math::div_req(self.precision_bits(), lhs.precision_bits(), rhs.precision_bits()).unwrap(),
-            )),
+            PodStack::new(&mut PodBuffer::new(math::div_scratch(
+                self.precision_bits(),
+                lhs.precision_bits(),
+                rhs.precision_bits(),
+            ))),
         );
         out
     }
@@ -275,9 +279,7 @@ impl PrecisionCtx {
             &mut out,
             x,
             Round::ToNearest,
-            PodStack::new(&mut GlobalPodBuffer::new(
-                math::sqrt_req(self.precision_bits(), x.precision_bits()).unwrap(),
-            )),
+            PodStack::new(&mut PodBuffer::new(math::sqrt_scratch(self.precision_bits(), x.precision_bits()))),
         );
         out
     }
@@ -295,9 +297,12 @@ impl PrecisionCtx {
             lhs,
             rhs,
             Round::ToNearest,
-            PodStack::new(&mut GlobalPodBuffer::new(
-                math::remquo_req(self.precision_bits(), quo_len, lhs.precision_bits(), rhs.precision_bits()).unwrap(),
-            )),
+            PodStack::new(&mut PodBuffer::new(math::remquo_scratch(
+                self.precision_bits(),
+                quo_len,
+                lhs.precision_bits(),
+                rhs.precision_bits(),
+            ))),
         );
         out
     }

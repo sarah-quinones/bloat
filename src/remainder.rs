@@ -1,43 +1,49 @@
 use super::*;
 
-fn remquo_finite_direct_req(rem_prec: u64, quo_len: usize, lhs_prec: u64, rhs_prec: u64) -> Result<StackReq, SizeOverflow> {
-    let fquo_prec = (quo_len as u64).checked_mul(consts::LIMB_BITS).ok_or(SizeOverflow)?;
+fn remquo_finite_direct_scratch(rem_prec: u64, quo_len: usize, lhs_prec: u64, rhs_prec: u64) -> StackReq {
+    let fquo_prec = match (quo_len as u64).checked_mul(consts::LIMB_BITS) {
+        Some(x) => x,
+        None => return StackReq::OVERFLOW,
+    };
 
-    StackReq::try_all_of([
-        temp_big_float_req(fquo_prec)?,
-        StackReq::try_any_of([
-            math::div_req(fquo_prec, lhs_prec, rhs_prec)?,
-            math::mul_req(rem_prec, fquo_prec, rhs_prec)?,
-        ])?,
+    StackReq::all_of(&[
+        temp_big_float_scratch(fquo_prec),
+        StackReq::any_of(&[
+            math::div_scratch(fquo_prec, lhs_prec, rhs_prec),
+            math::mul_scratch(rem_prec, fquo_prec, rhs_prec),
+        ]),
     ])
 }
-fn remquo_finite_req(rem_prec: u64, quo_len: usize, lhs_prec: u64, rhs_prec: u64) -> Result<StackReq, SizeOverflow> {
+fn remquo_finite_scratch(rem_prec: u64, quo_len: usize, lhs_prec: u64, rhs_prec: u64) -> StackReq {
     let y_len = (rhs_prec.div_ceil(consts::LIMB_BITS)) as usize;
 
-    let wide = StackReq::try_new::<Limb>(y_len * 2 + 1)?;
-    let pow2_mod_y = StackReq::try_new::<Limb>(y_len)?;
-    let __quo = StackReq::try_new::<Limb>(y_len)?;
-    let x_pow2_mod_y = StackReq::try_new::<Limb>(y_len)?;
+    let wide = StackReq::new::<Limb>(y_len * 2 + 1);
+    let pow2_mod_y = StackReq::new::<Limb>(y_len);
+    let __quo = StackReq::new::<Limb>(y_len);
+    let x_pow2_mod_y = StackReq::new::<Limb>(y_len);
 
-    let idiv = div::idivrem_normalized_req(y_len * 2 + 1, y_len)?;
-    let imul = mul::imul_req(y_len, y_len)?;
+    let idiv = div::idivrem_normalized_scratch(y_len * 2 + 1, y_len);
+    let imul = mul::imul_scratch(y_len, y_len);
 
-    let frem = temp_big_float_req((y_len as u64 + 1).checked_mul(consts::LIMB_BITS).ok_or(SizeOverflow)?)?;
+    let frem = temp_big_float_scratch(match (y_len as u64 + 1).checked_mul(consts::LIMB_BITS) {
+        Some(x) => x,
+        None => return StackReq::OVERFLOW,
+    });
 
-    StackReq::try_all_of([
+    StackReq::all_of(&[
         pow2_mod_y,
-        StackReq::try_any_of([
-            StackReq::try_all_of([frem, remquo_finite_direct_req(rem_prec, quo_len, lhs_prec, rhs_prec)?])?,
-            StackReq::try_all_of([wide, __quo, x_pow2_mod_y, StackReq::try_any_of([idiv, imul])?])?,
-        ])?,
+        StackReq::any_of(&[
+            StackReq::all_of(&[frem, remquo_finite_direct_scratch(rem_prec, quo_len, lhs_prec, rhs_prec)]),
+            StackReq::all_of(&[wide, __quo, x_pow2_mod_y, StackReq::any_of(&[idiv, imul])]),
+        ]),
     ])
 }
 
-pub fn remquo_req(rem_prec: u64, quo_len: usize, lhs_prec: u64, rhs_prec: u64) -> Result<StackReq, SizeOverflow> {
-    remquo_finite_req(rem_prec, quo_len, lhs_prec, rhs_prec)
+pub fn remquo_scratch(rem_prec: u64, quo_len: usize, lhs_prec: u64, rhs_prec: u64) -> StackReq {
+    remquo_finite_scratch(rem_prec, quo_len, lhs_prec, rhs_prec)
 }
 
-fn remquo_finite_direct(rem: &mut BigFloat, quo: &mut [Limb], lhs: &BigFloat, rhs: &BigFloat, rnd: Round, stack: PodStack<'_>) -> Approx {
+fn remquo_finite_direct(rem: &mut BigFloat, quo: &mut [Limb], lhs: &BigFloat, rhs: &BigFloat, rnd: Round, stack: &mut PodStack) -> Approx {
     let Exponent::Finite(lhs_exp) = lhs.exponent() else { panic!() };
     let Exponent::Finite(rhs_exp) = rhs.exponent() else { panic!() };
 
@@ -156,7 +162,7 @@ fn remquo_finite_direct(rem: &mut BigFloat, quo: &mut [Limb], lhs: &BigFloat, rh
     }
 }
 
-fn remquo_finite(rem: &mut BigFloat, quo: &mut [Limb], lhs: &BigFloat, rhs: &BigFloat, rnd: Round, stack: PodStack<'_>) -> Approx {
+fn remquo_finite(rem: &mut BigFloat, quo: &mut [Limb], lhs: &BigFloat, rhs: &BigFloat, rnd: Round, stack: &mut PodStack) -> Approx {
     let x = lhs;
     let y = rhs;
 
@@ -308,7 +314,7 @@ fn remquo_finite(rem: &mut BigFloat, quo: &mut [Limb], lhs: &BigFloat, rhs: &Big
     }
 }
 
-pub fn remquo(rem: &mut BigFloat, quo: &mut [Limb], lhs: &BigFloat, rhs: &BigFloat, rnd: Round, stack: PodStack<'_>) -> Approx {
+pub fn remquo(rem: &mut BigFloat, quo: &mut [Limb], lhs: &BigFloat, rhs: &BigFloat, rnd: Round, stack: &mut PodStack) -> Approx {
     match (lhs.exponent(), rhs.exponent()) {
         (Exponent::NaN | Exponent::Inf, _) | (_, Exponent::NaN | Exponent::Zero) => {
             quo.fill(consts::LIMB_ZERO);

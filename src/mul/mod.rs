@@ -3,38 +3,41 @@ use super::*;
 mod schoolbook;
 
 #[inline]
-pub fn imul_req(lhs_len: usize, rhs_len: usize) -> Result<StackReq, SizeOverflow> {
+pub fn imul_scratch(lhs_len: usize, rhs_len: usize) -> StackReq {
     _ = lhs_len;
     _ = rhs_len;
-    Ok(StackReq::empty())
+    StackReq::EMPTY
 }
 
 #[inline]
-pub fn isqr_req(input_len: usize) -> Result<StackReq, SizeOverflow> {
+pub fn isqr_scratch(input_len: usize) -> StackReq {
     _ = input_len;
-    Ok(StackReq::empty())
+    StackReq::EMPTY
 }
 
 #[inline]
-pub fn imul(full_mul: &mut [Limb], lhs: &[Limb], rhs: &[Limb], stack: PodStack<'_>) {
+pub fn imul(full_mul: &mut [Limb], lhs: &[Limb], rhs: &[Limb], stack: &mut PodStack) {
     _ = stack;
     schoolbook::mul_bigint(full_mul, lhs, rhs);
 }
 
 #[inline]
-pub fn isqr(full_mul: &mut [Limb], input: &[Limb], stack: PodStack<'_>) {
+pub fn isqr(full_mul: &mut [Limb], input: &[Limb], stack: &mut PodStack) {
     _ = stack;
     schoolbook::mul_bigint(full_mul, input, input);
 }
 
-pub fn mul_req(dst_prec: u64, lhs_prec: u64, rhs_prec: u64) -> Result<StackReq, SizeOverflow> {
+pub fn mul_scratch(dst_prec: u64, lhs_prec: u64, rhs_prec: u64) -> StackReq {
     _ = dst_prec;
     let lhs_prec = lhs_prec.next_multiple_of(consts::LIMB_BITS);
     let rhs_prec = rhs_prec.next_multiple_of(consts::LIMB_BITS);
-    let full_prec = lhs_prec.checked_add(rhs_prec).ok_or(SizeOverflow)?;
-    StackReq::try_all_of([
-        temp_big_float_req(full_prec)?,
-        imul_req((lhs_prec / consts::LIMB_BITS) as usize, (rhs_prec / consts::LIMB_BITS) as usize)?,
+    let full_prec = match lhs_prec.checked_add(rhs_prec) {
+        Some(x) => x,
+        None => return StackReq::OVERFLOW,
+    };
+    StackReq::all_of(&[
+        temp_big_float_scratch(full_prec),
+        imul_scratch((lhs_prec / consts::LIMB_BITS) as usize, (rhs_prec / consts::LIMB_BITS) as usize),
     ])
 }
 
@@ -55,7 +58,7 @@ fn mul_generic(
     mul: MulKind,
     negate: NegateKind,
     rnd: Round,
-    stack: PodStack<'_>,
+    stack: &mut PodStack,
 ) -> Approx {
     let sign = if lhs.sign() == rhs.sign() { Sign::Pos } else { Sign::Neg };
     let sign = match negate {
@@ -117,23 +120,23 @@ fn mul_generic(
     }
 }
 
-pub fn mul(dst: &mut BigFloat, lhs: &BigFloat, rhs: &BigFloat, rnd: Round, stack: PodStack<'_>) -> Approx {
+pub fn mul(dst: &mut BigFloat, lhs: &BigFloat, rhs: &BigFloat, rnd: Round, stack: &mut PodStack) -> Approx {
     mul_generic(dst, lhs, rhs, None, MulKind::MulAdd, NegateKind::NoNegate, rnd, stack)
 }
 
-pub fn mul_add(dst: &mut BigFloat, lhs: &BigFloat, rhs: &BigFloat, acc: &BigFloat, rnd: Round, stack: PodStack<'_>) -> Approx {
+pub fn mul_add(dst: &mut BigFloat, lhs: &BigFloat, rhs: &BigFloat, acc: &BigFloat, rnd: Round, stack: &mut PodStack) -> Approx {
     mul_generic(dst, lhs, rhs, Some(acc), MulKind::MulAdd, NegateKind::NoNegate, rnd, stack)
 }
 
-pub fn mul_sub(dst: &mut BigFloat, lhs: &BigFloat, rhs: &BigFloat, acc: &BigFloat, rnd: Round, stack: PodStack<'_>) -> Approx {
+pub fn mul_sub(dst: &mut BigFloat, lhs: &BigFloat, rhs: &BigFloat, acc: &BigFloat, rnd: Round, stack: &mut PodStack) -> Approx {
     mul_generic(dst, lhs, rhs, Some(acc), MulKind::MulSub, NegateKind::NoNegate, rnd, stack)
 }
 
-pub fn negate_mul_add(dst: &mut BigFloat, lhs: &BigFloat, rhs: &BigFloat, acc: &BigFloat, rnd: Round, stack: PodStack<'_>) -> Approx {
+pub fn negate_mul_add(dst: &mut BigFloat, lhs: &BigFloat, rhs: &BigFloat, acc: &BigFloat, rnd: Round, stack: &mut PodStack) -> Approx {
     mul_generic(dst, lhs, rhs, Some(acc), MulKind::MulAdd, NegateKind::Negate, rnd, stack)
 }
 
-pub fn negate_mul_sub(dst: &mut BigFloat, lhs: &BigFloat, rhs: &BigFloat, acc: &BigFloat, rnd: Round, stack: PodStack<'_>) -> Approx {
+pub fn negate_mul_sub(dst: &mut BigFloat, lhs: &BigFloat, rhs: &BigFloat, acc: &BigFloat, rnd: Round, stack: &mut PodStack) -> Approx {
     mul_generic(dst, lhs, rhs, Some(acc), MulKind::MulSub, NegateKind::Negate, rnd, stack)
 }
 

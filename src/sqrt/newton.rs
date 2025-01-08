@@ -1,20 +1,20 @@
 use super::*;
 use equator::assert;
 
-pub fn isqrt_req(n_len: usize, lshift: u64) -> Result<StackReq, SizeOverflow> {
+pub fn isqrt_scratch(n_len: usize, lshift: u64) -> StackReq {
     let nbits = n_len as u64 * (consts::LIMB_BITS / 2) + lshift.div_ceil(2);
     let nlimbs = nbits / consts::LIMB_BITS;
     let out_len = nlimbs as usize;
 
     // let div_lhs_len = n_len + 1 + lshift.div_ceil(consts::LIMB_BITS) as usize;
-    StackReq::try_all_of([
-        StackReq::try_new::<Limb>(n_len)?,
-        StackReq::try_new::<Limb>(1 + lshift.div_ceil(consts::LIMB_BITS) as usize)?,
-        StackReq::try_new::<Limb>(out_len)?,
+    StackReq::all_of(&[
+        StackReq::new::<Limb>(n_len),
+        StackReq::new::<Limb>(1 + lshift.div_ceil(consts::LIMB_BITS) as usize),
+        StackReq::new::<Limb>(out_len),
     ])
 }
 
-pub fn isqrt(out: &mut [Limb], n: &[Limb], lshift: u64, stack: PodStack<'_>) {
+pub fn isqrt(out: &mut [Limb], n: &[Limb], lshift: u64, stack: &mut PodStack) {
     let (div_lhs, stack) = stack.make_raw::<Limb>(n.len() + 1 + lshift.div_ceil(consts::LIMB_BITS) as usize);
     let (div_quo, mut stack) = stack.make_raw::<Limb>(out.len());
 

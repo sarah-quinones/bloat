@@ -1,12 +1,12 @@
 use super::*;
 use core::fmt;
 
-pub fn to_decimal_req(x_bits: u64) -> Result<StackReq, SizeOverflow> {
+pub fn to_decimal_scratch(x_bits: u64) -> StackReq {
     _ = x_bits;
-    Ok(StackReq::empty())
+    StackReq::EMPTY
 }
 
-pub fn to_decimal(f: &mut dyn fmt::Write, x: &BigFloat, stack: PodStack<'_>) -> fmt::Result {
+pub fn to_decimal(f: &mut dyn fmt::Write, x: &BigFloat, stack: &mut PodStack) -> fmt::Result {
     _ = stack;
     write!(f, "{}", convert::to_f64(x, Round::ToNearest).0)
 }
@@ -16,7 +16,7 @@ impl fmt::Display for BigFloat {
         to_decimal(
             f,
             self,
-            PodStack::new(&mut dyn_stack::GlobalPodBuffer::new(to_decimal_req(self.precision_bits()).unwrap())),
+            PodStack::new(&mut dyn_stack::PodBuffer::new(to_decimal_scratch(self.precision_bits()))),
         )
     }
 }

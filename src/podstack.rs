@@ -2,14 +2,14 @@ use super::*;
 use equator::assert;
 
 #[inline]
-pub fn temp_big_float_req(precision_bits: u64) -> Result<StackReq, SizeOverflow> {
+pub fn temp_big_float_scratch(precision_bits: u64) -> StackReq {
     let nlimbs = (precision_bits as usize).div_ceil(Limb::BITS as usize);
-    StackReq::try_new::<u64>(2 + nlimbs)
+    StackReq::new::<u64>(2 + nlimbs)
 }
 
 #[inline]
 #[track_caller]
-pub fn temp_big_float_uninit(precision_bits: u64, stack: PodStack<'_>) -> (&mut BigFloat, PodStack<'_>) {
+pub fn temp_big_float_uninit(precision_bits: u64, stack: &mut PodStack) -> (&mut BigFloat, &mut PodStack) {
     assert!(core::mem::size_of::<Limb>() == 8);
     assert!(all(precision_bits > 1, precision_bits < u64::MAX - Limb::BITS as u64,));
     let nlimbs = (precision_bits as usize).div_ceil(Limb::BITS as usize);
@@ -23,7 +23,7 @@ pub fn temp_big_float_uninit(precision_bits: u64, stack: PodStack<'_>) -> (&mut 
 
 #[inline]
 #[track_caller]
-pub fn temp_big_float_zero(precision_bits: u64, stack: PodStack<'_>) -> (&mut BigFloat, PodStack<'_>) {
+pub fn temp_big_float_zero(precision_bits: u64, stack: &mut PodStack) -> (&mut BigFloat, &mut PodStack) {
     let (buf, stack) = temp_big_float_uninit(precision_bits, stack);
     buf.sign_biased_exponent = 0;
     buf.mantissa_mut().fill(consts::LIMB_ZERO);

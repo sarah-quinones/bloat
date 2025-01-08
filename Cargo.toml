@@ -1,13 +1,22 @@
 [package]
-name = "bloat"
-version = "0.1.0"
+name = "msf"
+version = "0.0.1"
 edition = "2021"
+authors = ["sarah quiñones <sarah@veganb.tw>"]
+description = "multiprecision int/float library"
+readme = "README.md"
+repository = "https://github.com/sarah-quinones/msf/"
+license = "MIT"
+keywords = ["bigfloat", "bigint", "multiprecision"]
+
 
 [dependencies]
-bytemuck = "1.15.0"
-dyn-stack = "0.10.0"
-equator = "0.2.0"
+bytemuck = "1.21.0"
+dyn-stack = "0.12.0"
+equator = "0.4.2"
 reborrow = "0.5.5"
 
 [dev-dependencies]
 rug = "1.24.0"
+
+
